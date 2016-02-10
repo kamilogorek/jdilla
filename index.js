@@ -1,11 +1,30 @@
+const request = require('request')
+
 const RtmClient = require('slack-client').RtmClient
 const RTM_EVENTS = require('slack-client').EVENTS.API.EVENTS
 
-const token = process.env.SLACK_API_TOKEN
+const SLACK_TOKEN = process.env.SLACK_API_TOKEN
+const SOUNDCLOUD_CLIENT_ID = process.env.SOUNDCLOUD_CLIENT_ID
 
-if (!token) throw new Error('Please provide SLACK_API_TOKEN as your env variable')
+if (!SLACK_TOKEN) throw new Error('Please provide SLACK_API_TOKEN as your env variable')
+if (!SOUNDCLOUD_CLIENT_ID) throw new Error('Please provide SOUNDCLOUD_CLIENT_ID as your env variable')
 
-const rtm = new RtmClient(token, {
+function kindlyAskSoundCloud (endpoint, options) {
+  return new Promise((resolve, reject) => {
+    request({
+      method: 'GET',
+      uri: `https://api.soundcloud.com/${endpoint}`,
+      qs: Object.assign({
+        client_id: SOUNDCLOUD_CLIENT_ID
+      }, options)
+    }, (error, response, body) => {
+      if (error) return reject(error)
+      resolve(body)
+    })
+  })
+}
+
+const rtm = new RtmClient(SLACK_TOKEN, {
   logLevel: 'debug'
 })
 
@@ -50,26 +69,36 @@ rtm.on(RTM_EVENTS.MESSAGE, (message) => {
     case 'list':
       {
         const queue = channels[channel].queue.map((track, index) => {
-          return `${index + 1}. ${track}`
+          return `${index + 1}. ${track.title}`
         }).join('\n')
-        rtm.sendMessage(queue || 'No tracks in a queue', message.channel)
+        const response = queue ? 'Tracks list:\n' + queue : 'No tracks in a queue'
+        rtm.sendMessage(response, message.channel)
         break
       }
     case 'add':
       {
-        channels[channel].queue.push(messageData)
-        rtm.sendMessage(`${messageData} has been added to the queue`, message.channel)
+        kindlyAskSoundCloud('tracks', {
+          q: messageData
+        }).then((tracks) => {
+          try {
+            const song = JSON.parse(tracks)[0]
+            channels[channel].queue.push(song)
+            rtm.sendMessage(`"${song.title}" has been added to the queue`, message.channel)
+          } catch (e) {
+            rtm.sendMessage(`Sorry, something went wrong while trying to add "${messageData}"`, message.channel)
+          }
+        })
         break
       }
     case 'remove':
       {
         const trackPosition = channels[channel].queue.indexOf(messageData)
         if (trackPosition === -1) {
-          rtm.sendMessage(`Sorry, ${messageData} has not been found in the queue`, message.channel)
+          rtm.sendMessage(`Sorry, "${messageData}" has not been found in the queue`, message.channel)
           return
         }
         channels[channel].queue.splice(trackPosition, 1)
-        rtm.sendMessage(`${messageData} has been removed from the queue`, message.channel)
+        rtm.sendMessage(`"${messageData}" has been removed from the queue`, message.channel)
         break
       }
     case 'play':
@@ -101,7 +130,7 @@ rtm.on(RTM_EVENTS.MESSAGE, (message) => {
         }
 
         const nextTrack = channels[channel].queue.shift()
-        rtm.sendMessage(`Track skipped. Next track: ${nextTrack}`, message.channel)
+        rtm.sendMessage(`Track skipped. Next track: "${nextTrack}"`, message.channel)
         break
       }
   }

@@ -1,21 +1,22 @@
 {
-	"name": "jdilla",
-	"version": "1.0.0",
-	"description": "Disc jockey for your Slack channels",
-	"main": "index.js",
-	"scripts": {
-		"test": "standard",
-		"start": "node index.js"
-	},
-	"author": "Kamil Ogórek <kamil.ogorek@gmail.com>",
-	"license": "MIT",
-	"engines": {
-		"node": "5.x"
-	},
-	"dependencies": {
-		"slack-client": "^2.0.0-beta.8"
-	},
-	"devDependencies": {
-		"standard": "^6.0.4"
-	}
+  "name": "jdilla",
+  "version": "1.0.0",
+  "description": "Disc jockey for your Slack channels",
+  "main": "index.js",
+  "scripts": {
+    "test": "standard",
+    "start": "node index.js"
+  },
+  "author": "Kamil Ogórek <kamil.ogorek@gmail.com>",
+  "license": "MIT",
+  "engines": {
+    "node": "5.x"
+  },
+  "dependencies": {
+    "request": "^2.69.0",
+    "slack-client": "^2.0.0-beta.8"
+  },
+  "devDependencies": {
+    "standard": "^6.0.4"
+  }
 }
