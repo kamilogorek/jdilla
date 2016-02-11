@@ -1,11 +1,12 @@
 {
   "name": "jdilla",
   "version": "1.0.0",
-  "description": "Disc jockey for your Slack channels",
+  "description": "Disc jockey for your Slack channel",
   "main": "index.js",
   "scripts": {
     "test": "standard",
-    "start": "node index.js"
+    "start": "node index.js",
+    "dev": "watchify public/index.js -o public/bundle.js -v -t [ babelify --presets [ es2015 ] ]"
   },
   "author": "Kamil Ogórek <kamil.ogorek@gmail.com>",
   "license": "MIT",
@@ -13,10 +14,19 @@
     "node": "5.x"
   },
   "dependencies": {
+    "express": "^4.13.4",
+    "lodash": "^4.3.0",
     "request": "^2.69.0",
-    "slack-client": "^2.0.0-beta.8"
+    "slack-client": "^2.0.0-beta.8",
+    "socket.io": "^1.4.5",
+    "socket.io-client": "^1.4.5",
+    "soundcloud": "^3.1.0",
+    "xhr": "^2.2.0"
   },
   "devDependencies": {
-    "standard": "^6.0.4"
+    "babel-preset-es2015": "^6.5.0",
+    "babelify": "^7.2.0",
+    "standard": "^6.0.4",
+    "watchify": "^3.7.0"
   }
 }

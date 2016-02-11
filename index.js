@@ -1,13 +1,26 @@
+const path = require('path')
+const express = require('express')
 const request = require('request')
+const _ = require('lodash')
+const slackClient = require('slack-client')
 
-const RtmClient = require('slack-client').RtmClient
-const RTM_EVENTS = require('slack-client').EVENTS.API.EVENTS
+const PORT = process.env.PORT || 8000
 
-const SLACK_TOKEN = process.env.SLACK_API_TOKEN
-const SOUNDCLOUD_CLIENT_ID = process.env.SOUNDCLOUD_CLIENT_ID
+const env = require('./env.js')
+const SLACK_TOKEN = process.env.SLACK_API_TOKEN || env.SLACK_TOKEN
+const SOUNDCLOUD_CLIENT_ID = process.env.SOUNDCLOUD_CLIENT_ID || env.SOUNDCLOUD_CLIENT_ID
 
 if (!SLACK_TOKEN) throw new Error('Please provide SLACK_API_TOKEN as your env variable')
 if (!SOUNDCLOUD_CLIENT_ID) throw new Error('Please provide SOUNDCLOUD_CLIENT_ID as your env variable')
+
+const server = express()
+const slackSocket = new slackClient.RtmClient(SLACK_TOKEN, {
+  logLevel: 'debug'
+})
+
+/**
+ * SoundCloud
+ ********************************/
 
 function kindlyAskSoundCloud (endpoint, options) {
   return new Promise((resolve, reject) => {
@@ -24,23 +37,20 @@ function kindlyAskSoundCloud (endpoint, options) {
   })
 }
 
-const rtm = new RtmClient(SLACK_TOKEN, {
-  logLevel: 'debug'
-})
+/**
+ * Slack
+ ********************************/
 
-const model = {
+const state = {
   queue: [],
-  currentTrack: '',
-  playing: false,
-  paused: false
+  currentTrack: null,
+  playing: false
 }
 
-const channels = {}
-
-const commands = ['list', 'add', 'remove', 'play', 'pause', 'stop', 'next']
+const commands = ['list', 'find', 'add', 'remove', 'play', 'pause', 'next', 'skip', 'help']
 const commandsRequiringData = ['add', 'remove']
 
-rtm.on(RTM_EVENTS.MESSAGE, (message) => {
+slackSocket.on(slackClient.EVENTS.API.EVENTS.MESSAGE, (message) => {
   // J Dilla Trigger: J
   if (!message.text.match(/^J .*/i)) return
 
@@ -50,90 +60,169 @@ rtm.on(RTM_EVENTS.MESSAGE, (message) => {
   const messageData = partitionedMessage.slice(2).join(' ')
 
   if (!~commands.indexOf(messageCommand)) {
-    rtm.sendMessage('Sorry mate, incorrect command. Peace.', message.channel)
+    slackSocket.sendMessage('Sorry mate, incorrect command. Peace.', channel)
     return
   }
 
   if (~commandsRequiringData.indexOf(messageCommand) && !messageData) {
-    rtm.sendMessage(`Got your command (${messageCommand}), but you didn't specify data mate!`, message.channel)
+    slackSocket.sendMessage(`Got your command (${messageCommand}), but you didn't specify data mate!`, channel)
     return
   }
 
-  // rtm.sendMessage(`Command: ${messageCommand}; Data: ${messageData};`, message.channel)
+  // slackSocket.sendMessage(`Command: ${messageCommand}; Data: ${messageData};`, channel)
 
-  if (!channels[channel]) {
-    channels[channel] = Object.assign({}, model)
-  }
+  var response
 
   switch (messageCommand) {
-    case 'list':
+    case 'help':
       {
-        const queue = channels[channel].queue.map((track, index) => {
-          return `${index + 1}. ${track.title}`
-        }).join('\n')
-        const response = queue ? 'Tracks list:\n' + queue : 'No tracks in a queue'
-        rtm.sendMessage(response, message.channel)
+        response = '' +
+          'How can I help you m8?:\n' +
+          '\`\`\`\n' +
+          'list – display tracks queue\n' +
+          'find – search for a track on SoundCloud and get it\'s ID\n' +
+          'add — add track to the queue by ID\n' +
+          'remove — remove track from the queue by ID\n' +
+          'play – start/resume playback\n' +
+          'pause – pause playback\n' +
+          'next/skip – skip current song\n' +
+          'help – display this great manual\n' +
+          '\`\`\`'
+        slackSocket.sendMessage(response, channel)
         break
       }
-    case 'add':
+    case 'list':
+      {
+        var queue = state.queue.map((track, index) => {
+          return `${index + 1}. ${track.user.username} — ${track.title} \`${track.id}\``
+        }).join('\n')
+        response = queue ? 'Tracks list:\n' + queue : 'No tracks in a queue'
+        slackSocket.sendMessage(response, channel)
+        break
+      }
+    case 'find':
       {
         kindlyAskSoundCloud('tracks', {
           q: messageData
         }).then((tracks) => {
           try {
-            const song = JSON.parse(tracks)[0]
-            channels[channel].queue.push(song)
-            rtm.sendMessage(`"${song.title}" has been added to the queue`, message.channel)
+            var foundItems = JSON.parse(tracks).map((track, index) => {
+              return `${index + 1}. ${track.user.username} — ${track.title} \`${track.id}\``
+            }).join('\n')
+            response = foundItems ? 'Tracks found:\n' + foundItems : 'No tracks found'
+            slackSocket.sendMessage(response, channel)
           } catch (e) {
-            rtm.sendMessage(`Sorry, something went wrong while trying to add "${messageData}"`, message.channel)
+            slackSocket.sendMessage(`Sorry, something went wrong while trying to find "${messageData}"`, channel)
+          }
+        })
+        break
+      }
+    case 'add':
+      {
+        kindlyAskSoundCloud(`tracks/${messageData}`).then((track) => {
+          try {
+            track = JSON.parse(track)
+            if (track.errors) {
+              slackSocket.sendMessage(`SongID: \`${messageData}\` has not been found`, channel)
+              return
+            }
+            if (!state.currentTrack) {
+              state.currentTrack = track
+              slackSocket.sendMessage(`No previous tracks available. "${track.user.username} — ${track.title}" is playing straight away!`, channel)
+              io.emit('stream', track)
+              return
+            }
+            state.queue.push(track)
+            slackSocket.sendMessage(`"${track.user.username} — ${track.title}" has been added to the queue`, channel)
+          } catch (e) {
+            slackSocket.sendMessage(`Sorry, something went wrong while trying to add "${messageData}"`, channel)
           }
         })
         break
       }
     case 'remove':
       {
-        const trackPosition = channels[channel].queue.indexOf(messageData)
+        var trackPosition = _.findIndex(state.queue, (track) => {
+          return parseInt(track.id, 10) === parseInt(messageData, 10)
+        })
         if (trackPosition === -1) {
-          rtm.sendMessage(`Sorry, "${messageData}" has not been found in the queue`, message.channel)
+          slackSocket.sendMessage(`Sorry, SongID \`${messageData}\` has not been found in the queue`, channel)
           return
         }
-        channels[channel].queue.splice(trackPosition, 1)
-        rtm.sendMessage(`"${messageData}" has been removed from the queue`, message.channel)
+        var removedTrack = state.queue.splice(trackPosition, 1)[0]
+        slackSocket.sendMessage(`"${removedTrack.user.username} — ${removedTrack.title}" has been removed from the queue`, channel)
         break
       }
     case 'play':
       {
-        channels[channel].playing = true
-        channels[channel].paused = false
-        rtm.sendMessage('Playback started', message.channel)
+        state.playing = true
+        io.emit('play')
+        slackSocket.sendMessage('Playback started', channel)
         break
       }
     case 'pause':
       {
-        channels[channel].playing = false
-        channels[channel].paused = true
-        rtm.sendMessage('Playback paused', message.channel)
-        break
-      }
-    case 'stop':
-      {
-        channels[channel].playing = false
-        channels[channel].paused = false
-        rtm.sendMessage('Playback stopped', message.channel)
+        state.playing = false
+        io.emit('pause')
+        slackSocket.sendMessage('Playback paused', channel)
         break
       }
     case 'next':
+    case 'skip':
       {
-        if (channels[channel].queue.length === 0) {
-          rtm.sendMessage('No tracks in a queue', message.channel)
-          return
+        if (state.queue.length > 0) {
+          state.currentTrack = state.queue.shift()
+          slackSocket.sendMessage(`Track skipped. Next track: "${state.currentTrack.user.username} — ${state.currentTrack.title} \`${state.currentTrack.id}\`"`, channel)
+        } else {
+          state.currentTrack = null
+          slackSocket.sendMessage('No tracks in a queue', channel)
         }
 
-        const nextTrack = channels[channel].queue.shift()
-        rtm.sendMessage(`Track skipped. Next track: "${nextTrack}"`, message.channel)
+        io.emit('next', state.currentTrack)
         break
       }
   }
 })
 
-rtm.start()
+/**
+ * Server
+ ********************************/
+
+const http = require('http').Server(server)
+const io = require('socket.io')(http)
+
+server.use(express.static('public'))
+
+server.get('/current', (req, res) => {
+  res.send(state.currentTrack)
+})
+
+server.get('/next', (req, res) => {
+  if (state.queue.length > 0) {
+    state.currentTrack = state.queue.shift()
+  } else {
+    state.currentTrack = null
+  }
+
+  res.send(state.currentTrack)
+})
+
+server.get('*', (req, res) => {
+  if (req.path !== '/') {
+    res.redirect('/')
+  } else {
+    res.sendFile('index.html', {
+      root: path.join(__dirname, 'public')
+    })
+  }
+})
+
+/**
+ * Startup
+ ********************************/
+
+slackSocket.on(slackClient.EVENTS.CLIENT.RTM.RTM_CONNECTION_OPENED, () => {
+  http.listen(PORT, () => console.log(`Server listening on port ${PORT}!`))
+})
+
+slackSocket.start()

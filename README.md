@@ -1,5 +1,5 @@
 # J Dilla
-## Disc jockey for your Slack channels
+## Disc jockey for your Slack channel
 
 * Create bot and get token from Slack's [Bot Page](https://slack.com/apps/A0F7YS25R-bots)
 * Create app and get client ID from SoundCloud's [App Page](http://soundcloud.com/you/apps/)
